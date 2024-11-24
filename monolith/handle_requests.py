@@ -15,8 +15,6 @@ assign_producer = KafkaProducer(
 
 def handle_assign_order_request(order_id: str, executer_id: str, locale: str) -> str:
     # Kafka producer configuration
-    
-
     # Create the event
     event = {
         'order_id': order_id,
@@ -56,6 +54,7 @@ def get_order_by_executor(executer_id: str):
     # This function simulates getting an order_id from a database
     # In a real scenario, you would have a database call here
     time.sleep(0.5)  # Simulate network/database delay
+    
     return f"order_id_for_{executer_id}"
 
 def process_batch_of_requests(requests):
@@ -75,7 +74,7 @@ def process_batch_of_requests(requests):
 
     return results
 
-def add_request_to_batch(executer_id: str):
+def handle_acquire_order_request(executer_id: str):
     with batch_lock:
         batch_requests.append(executer_id)
         if len(batch_requests) >= batch_size:  # If the batch is ready
@@ -84,27 +83,33 @@ def add_request_to_batch(executer_id: str):
             batch_requests.clear()
             future = batch_executor.submit(process_batch_of_requests, batch_copy)
             results = future.result()  # Wait for completion and get the results
-            print_batch_results(results)
             return results
+        
+######## cancel
 
-def print_batch_results(results):
-    for executer_id, order_id in results:
-        print(f"Executer ID: {executer_id} -> Order ID: {order_id}")
+# Producer configuration for cancellations
+cancel_producer = KafkaProducer(
+    bootstrap_servers='localhost:9092',  # Update this to your Kafka server address
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')  # Serialize to JSON string
+)
 
-# Start listening for new requests
-def listen_for_new_requests():
-    while True:
-        # Simulate incoming request (replace this with actual request logic)
-        time.sleep(1)
-        executer_id = f"executer_{int(time.time())}"  # Simulate unique ID
-        add_request_to_batch(executer_id)
+def handle_cancel_order_request(order_id: str) -> str:
+    # Create the event for cancellation
+    event = {
+        'order_id': order_id
+    }
 
-# Launch the listener
-threading.Thread(target=listen_for_new_requests, daemon=True).start()
+    # Topic to produce cancellation messages to
+    topic = "order-cancellations"
+    
+    try:
+        # Send the cancellation message to Kafka
+        future = cancel_producer.send(topic, value=event)
+        # Block until a single message is sent (or timeout)
+        future.get(timeout=10)
+        print("INFO: Cancellation message sent successfully.")
+    except Exception as e:
+        print(f"ERROR: Failed to send cancellation message: {e}")
+        return "failure"
 
-# Keep the program running
-try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    pass
+    return "success"
